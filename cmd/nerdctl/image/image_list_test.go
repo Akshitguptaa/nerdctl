@@ -58,7 +58,7 @@ func TestImages(t *testing.T) {
 						Output: func(stdout string, t tig.T) {
 							lines := strings.Split(strings.TrimSpace(stdout), "\n")
 							assert.Assert(t, len(lines) >= 2, "there should be at least two lines\n")
-							header := "REPOSITORY\tTAG\tIMAGE ID\tCREATED\tPLATFORM\tSIZE\tBLOB SIZE"
+							header := "REPOSITORY\tTAG\tID\tCREATED\tPLATFORM\tDISK USAGE\tCONTENT SIZE\tEXTRA"
 							if nerdtest.IsDocker() {
 								header = "REPOSITORY\tTAG\tIMAGE ID\tCREATED\tSIZE"
 							}
@@ -89,7 +89,7 @@ func TestImages(t *testing.T) {
 							func(stdout string, t tig.T) {
 								lines := strings.Split(strings.TrimSpace(stdout), "\n")
 								assert.Assert(t, len(lines) >= 2, "there should be at least two lines\n")
-								tab := tabutil.NewReader("NAME\tIMAGE ID\tCREATED\tPLATFORM\tSIZE\tBLOB SIZE")
+								tab := tabutil.NewReader("NAME\tID\tCREATED\tPLATFORM\tDISK USAGE\tCONTENT SIZE\tEXTRA")
 								err := tab.ParseHeader(lines[0])
 								assert.NilError(t, err, "ParseHeader should not fail\n")
 								found := false
@@ -104,6 +104,44 @@ func TestImages(t *testing.T) {
 								assert.Assert(t, found, "we should have found an image\n")
 							},
 						),
+					}
+				},
+			},
+			{
+				Description: "In Use marker",
+				NoParallel:  true,
+				Setup: func(data test.Data, helpers test.Helpers) {
+					helpers.Ensure("run", "--quiet", "-d", "--name", data.Identifier(), commonImage.String(), "sleep", nerdtest.Infinity)
+				},
+				Cleanup: func(data test.Data, helpers test.Helpers) {
+					helpers.Anyhow("rm", "-f", data.Identifier())
+				},
+				Command: test.Command("images"),
+				Expected: func(data test.Data, helpers test.Helpers) *test.Expected {
+					return &test.Expected{
+						Output: func(stdout string, t tig.T) {
+							lines := strings.Split(strings.TrimSpace(stdout), "\n")
+							assert.Assert(t, len(lines) >= 2, "there should be at least two lines\n")
+							tab := tabutil.NewReader("REPOSITORY\tTAG\tID\tCREATED\tPLATFORM\tDISK USAGE\tCONTENT SIZE\tEXTRA")
+							err := tab.ParseHeader(lines[0])
+							assert.NilError(t, err, "ParseHeader should not fail\n")
+							var sawInUse, sawNotInUse bool
+							for _, line := range lines[1:] {
+								repo, _ := tab.ReadRow(line, "REPOSITORY")
+								tag, _ := tab.ReadRow(line, "TAG")
+								extra, _ := tab.ReadRow(line, "EXTRA")
+								switch {
+								case repo+":"+tag == commonImage.FamiliarName()+":"+commonImage.Tag:
+									assert.Equal(t, extra, "U", "image used by a running container should be marked in use\n")
+									sawInUse = true
+								case repo+":"+tag == testutil.NginxAlpineImage:
+									assert.Equal(t, extra, "", "image not used by any container should not be marked in use\n")
+									sawNotInUse = true
+								}
+							}
+							assert.Assert(t, sawInUse, "should have found the in-use image\n")
+							assert.Assert(t, sawNotInUse, "should have found the not-in-use image\n")
+						},
 					}
 				},
 			},
@@ -315,19 +353,12 @@ CMD ["echo", "nerdctl-build-notag-string"]
 			{
 				Description: "dangling",
 				Command:     test.Command("images", "--filter", "dangling=true"),
-				Expected: func(data test.Data, helpers test.Helpers) *test.Expected {
-					// TODO: follow Docker v29 behavior (change <none> to <untagged>) https://github.com/containerd/nerdctl/issues/5027
-					dangling := "<none>"
-					if nerdtest.IsDocker() {
-						dangling = "<untagged>"
-					}
-					return test.Expects(0, nil, expect.Contains(dangling))(data, helpers)
-				},
+				Expected:    test.Expects(0, nil, expect.Contains("<untagged>")),
 			},
 			{
 				Description: "not dangling",
 				Command:     test.Command("images", "--filter", "dangling=false"),
-				Expected:    test.Expects(0, nil, expect.DoesNotContain("<none>")),
+				Expected:    test.Expects(0, nil, expect.DoesNotContain("<untagged>")),
 			},
 		},
 	}
@@ -355,9 +386,11 @@ func TestImagesKubeWithKubeHideDupe(t *testing.T) {
 							var imageID string
 							var skipLine int
 							lines := strings.Split(strings.TrimSpace(stdout), "\n")
-							header := "REPOSITORY\tTAG\tIMAGE ID\tCREATED\tPLATFORM\tSIZE\tBLOB SIZE"
+							header := "REPOSITORY\tTAG\tID\tCREATED\tPLATFORM\tDISK USAGE\tCONTENT SIZE\tEXTRA"
+							idKey := "ID"
 							if nerdtest.IsDocker() {
 								header = "REPOSITORY\tTAG\tIMAGE ID\tCREATED\tSIZE"
+								idKey = "IMAGE ID"
 							}
 							tab := tabutil.NewReader(header)
 							err := tab.ParseHeader(lines[0])
@@ -368,7 +401,7 @@ func TestImagesKubeWithKubeHideDupe(t *testing.T) {
 								tag, _ := tab.ReadRow(line, "TAG")
 								if repo+":"+tag == testutil.BusyboxImage {
 									skipLine = i
-									imageID, _ = tab.ReadRow(line, "IMAGE ID")
+									imageID, _ = tab.ReadRow(line, idKey)
 									break
 								}
 							}
@@ -376,7 +409,7 @@ func TestImagesKubeWithKubeHideDupe(t *testing.T) {
 								if i == skipLine {
 									continue
 								}
-								id, _ := tab.ReadRow(line, "IMAGE ID")
+								id, _ := tab.ReadRow(line, idKey)
 								if id == imageID {
 									found = false
 									break
@@ -392,7 +425,7 @@ func TestImagesKubeWithKubeHideDupe(t *testing.T) {
 				Command:     test.Command("images"),
 				Expected: func(data test.Data, helpers test.Helpers) *test.Expected {
 					return &test.Expected{
-						Output: expect.Contains("<none>"),
+						Output: expect.Contains("<untagged>"),
 					}
 				},
 			},

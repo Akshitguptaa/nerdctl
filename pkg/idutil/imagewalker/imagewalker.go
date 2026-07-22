@@ -48,10 +48,10 @@ to display only repo:tag, consistent with other namespaces and CRI.
 e.g.
 
 	nerdctl -n k8s.io images
-	REPOSITORY    TAG       IMAGE ID        CREATED        PLATFORM       SIZE         BLOB SIZE
-	centos        7         be65f488b776    3 hours ago    linux/amd64    211.5 MiB    72.6 MiB
-	centos        <none>    be65f488b776    3 hours ago    linux/amd64    211.5 MiB    72.6 MiB
-	<none>        <none>    be65f488b776    3 hours ago    linux/amd64    211.5 MiB    72.6 MiB
+	REPOSITORY    TAG          ID              CREATED        PLATFORM       DISK USAGE   CONTENT SIZE   EXTRA
+	centos        7            be65f488b776    3 hours ago    linux/amd64    211.5 MiB    72.6 MiB
+	centos        <untagged>   be65f488b776    3 hours ago    linux/amd64    211.5 MiB    72.6 MiB
+	<untagged>    <untagged>   be65f488b776    3 hours ago    linux/amd64    211.5 MiB    72.6 MiB
 
 The boolean value will return true only when the repo:tag is successfully
 deleted for each image. Once all repo:tag entries are deleted, it is necessary

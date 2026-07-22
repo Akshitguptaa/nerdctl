@@ -671,12 +671,7 @@ CMD ["echo", "nerdctl-build-test-string"]
 		},
 		Command: test.Command("images", "--all"),
 		Expected: func(data test.Data, helpers test.Helpers) *test.Expected {
-			// TODO: follow Docker v29 behavior (change <none> to <untagged>) https://github.com/containerd/nerdctl/issues/5027
-			noTag := "<none>"
-			if nerdtest.IsDocker() {
-				noTag = "<untagged>"
-			}
-			return test.Expects(expect.ExitCodeSuccess, nil, expect.Contains(noTag))(data, helpers)
+			return test.Expects(expect.ExitCodeSuccess, nil, expect.Contains("<untagged>"))(data, helpers)
 		},
 	}
 

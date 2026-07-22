@@ -34,14 +34,15 @@ func ImagesCommand() *cobra.Command {
 	longHelp := shortHelp + `
 
 Properties:
-- REPOSITORY: Repository
-- TAG:        Tag
-- NAME:       Name of the image, --names for skip parsing as repository and tag.
-- IMAGE ID:   OCI Digest. Usually different from Docker image ID. Shared for multi-platform images.
-- CREATED:    Created time
-- PLATFORM:   Platform
-- SIZE:       Size of the unpacked snapshots
-- BLOB SIZE:  Size of the blobs (such as layer tarballs) in the content store
+- REPOSITORY:   Repository
+- TAG:          Tag
+- NAME:         Name of the image, --names for skip parsing as repository and tag.
+- ID:           OCI Digest. Usually different from Docker image ID. Shared for multi-platform images.
+- CREATED:      Created time
+- PLATFORM:     Platform
+- DISK USAGE:   Size of the unpacked snapshots
+- CONTENT SIZE: Size of the blobs (such as layer tarballs) in the content store
+- EXTRA:        "U" if the image is in use by a container
 `
 	var cmd = &cobra.Command{
 		Use:                   "images [flags] [REPOSITORY[:TAG]]",

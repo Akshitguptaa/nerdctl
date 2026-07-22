@@ -120,12 +120,47 @@ type imagePrintable struct {
 	Digest       string // "<none>" or image target digest (i.e., index digest or manifest digest)
 	ID           string // image target digest (not config digest, unlike Docker), or its short form
 	Repository   string
-	Tag          string // "<none>" or tag
+	Tag          string // "<untagged>" or tag
 	Name         string // image name
-	Size         string // the size of the unpacked snapshots.
-	BlobSize     string // the size of the blobs in the content store (nerdctl extension)
+	Size         string // the size of the unpacked snapshots. Printed as the "DISK USAGE" column, matching Docker v29
+	BlobSize     string // the size of the blobs in the content store (nerdctl extension). Printed as the "CONTENT SIZE" column, matching Docker v29
 	// TODO: "SharedSize", "UniqueSize"
 	Platform string // nerdctl extension
+	Extra    string // "U" if the image is in use by a container, else "". Printed as the "EXTRA" column, matching Docker v29
+}
+
+// getUsedImageDigests returns the set of image target digests that are referenced by
+// at least one existing container (running or not), so that `nerdctl images` can flag
+// them in the EXTRA column with "U", matching Docker v29's "In Use" marker.
+//
+// Failures resolving individual containers or images are skipped rather than treated as
+// fatal: the EXTRA column is an informational annotation, and shouldn't prevent `images`
+// from printing.
+func getUsedImageDigests(ctx context.Context, client *containerd.Client) (map[digest.Digest]bool, error) {
+	used := make(map[digest.Digest]bool)
+
+	containerList, err := client.Containers(ctx)
+	if err != nil {
+		return used, err
+	}
+
+	imageStore := client.ImageService()
+	seenNames := make(map[string]bool)
+	for _, c := range containerList {
+		info, err := c.Info(ctx, containerd.WithoutRefreshedMetadata)
+		if err != nil || info.Image == "" || seenNames[info.Image] {
+			continue
+		}
+		seenNames[info.Image] = true
+
+		img, err := imageStore.Get(ctx, info.Image)
+		if err != nil {
+			continue
+		}
+		used[img.Target.Digest] = true
+	}
+
+	return used, nil
 }
 
 func printImages(ctx context.Context, client *containerd.Client, imageList []images.Image, options *types.ImageListOptions) error {
@@ -136,13 +171,13 @@ func printImages(ctx context.Context, client *containerd.Client, imageList []ima
 		We expect to display only repo:tag, consistent with other namespaces and CRI
 		e.g.
 		nerdctl -n k8s.io images
-		REPOSITORY    TAG       IMAGE ID        CREATED        PLATFORM       SIZE         BLOB SIZE
-		centos        7         be65f488b776    3 hours ago    linux/amd64    211.5 MiB    72.6 MiB
-		centos        <none>    be65f488b776    3 hours ago    linux/amd64    211.5 MiB    72.6 MiB
-		<none>        <none>    be65f488b776    3 hours ago    linux/amd64    211.5 MiB    72.6 MiB
+		REPOSITORY    TAG          ID              CREATED        PLATFORM       DISK USAGE   CONTENT SIZE   EXTRA
+		centos        7            be65f488b776    3 hours ago    linux/amd64    211.5 MiB    72.6 MiB
+		centos        <untagged>   be65f488b776    3 hours ago    linux/amd64    211.5 MiB    72.6 MiB
+		<untagged>    <untagged>   be65f488b776    3 hours ago    linux/amd64    211.5 MiB    72.6 MiB
 		expect:
 		nerdctl --kube-hide-dupe -n k8s.io images
-		REPOSITORY    TAG       IMAGE ID        CREATED        PLATFORM       SIZE         BLOB SIZE
+		REPOSITORY    TAG       ID              CREATED        PLATFORM       DISK USAGE   CONTENT SIZE   EXTRA
 		centos        7         be65f488b776    3 hours ago    linux/amd64    211.5 MiB    72.6 MiB
 	*/
 	if options.GOptions.KubeHideDupe && options.GOptions.Namespace == "k8s.io" {
@@ -174,6 +209,14 @@ func printImages(ctx context.Context, client *containerd.Client, imageList []ima
 	if options.Format == "wide" {
 		digestsFlag = true
 	}
+
+	// Determine which images are referenced by at least one container, so they can be
+	// flagged in the EXTRA column ("U"), matching Docker v29's "In Use" marker.
+	usedDigests, err := getUsedImageDigests(ctx, client)
+	if err != nil {
+		log.G(ctx).WithError(err).Debug("failed to determine which images are in use by containers")
+	}
+
 	var tmpl *template.Template
 	switch options.Format {
 	case "", "table", "wide":
@@ -188,7 +231,7 @@ func printImages(ctx context.Context, client *containerd.Client, imageList []ima
 			if digestsFlag {
 				printHeader += "DIGEST\t"
 			}
-			printHeader += "IMAGE ID\tCREATED\tPLATFORM\tSIZE\tBLOB SIZE"
+			printHeader += "ID\tCREATED\tPLATFORM\tDISK USAGE\tCONTENT SIZE\tEXTRA"
 			fmt.Fprintln(w, printHeader)
 		}
 	case "raw":
@@ -214,6 +257,7 @@ func printImages(ctx context.Context, client *containerd.Client, imageList []ima
 		client:      client,
 		provider:    containerdutil.NewProvider(client),
 		snapshotter: containerdutil.SnapshotService(client, options.GOptions.Snapshotter),
+		usedDigests: usedDigests,
 	}
 
 	for _, img := range finalImageList {
@@ -234,6 +278,7 @@ type imagePrinter struct {
 	client                                 *containerd.Client
 	provider                               content.Provider
 	snapshotter                            snapshots.Snapshotter
+	usedDigests                            map[digest.Digest]bool
 }
 
 type image struct {
@@ -378,11 +423,14 @@ func (x *imagePrinter) printImageSinglePlatform(desc ocispec.Descriptor, img ima
 		BlobSize:     units.HumanSize(float64(blobSize)),
 		Platform:     platforms.FormatAll(plt),
 	}
+	if x.usedDigests[img.Target.Digest] {
+		p.Extra = "U"
+	}
 	if p.Repository == "" {
-		p.Repository = "<none>"
+		p.Repository = "<untagged>"
 	}
 	if p.Tag == "" {
-		p.Tag = "<none>" // for Docker compatibility
+		p.Tag = "<untagged>" // Docker v29 renamed this from "<none>" to "<untagged>"
 	}
 	if !x.noTrunc {
 		// p.Digest does not need to be truncated
@@ -415,8 +463,8 @@ func (x *imagePrinter) printImageSinglePlatform(desc ocispec.Descriptor, img ima
 			args = append(args, p.Digest)
 		}
 
-		format += "%s\t%s\t%s\t%s\t%s\n"
-		args = append(args, p.ID, p.CreatedSince, p.Platform, p.Size, p.BlobSize)
+		format += "%s\t%s\t%s\t%s\t%s\t%s\n"
+		args = append(args, p.ID, p.CreatedSince, p.Platform, p.Size, p.BlobSize, p.Extra)
 		if _, err := fmt.Fprintf(x.w, format, args...); err != nil {
 			return err
 		}

@@ -56,7 +56,7 @@ func TestImagePrune(t *testing.T) {
 			Description: "without all",
 			NoParallel:  true,
 			Require: require.All(
-				// This never worked with Docker - the only reason we ever got <none> was side effects from other tests
+				// This never worked with Docker - the only reason we ever got <untagged> was side effects from other tests
 				// See inline comments.
 				require.Not(nerdtest.Docker),
 				nerdtest.Build,
@@ -73,11 +73,11 @@ func TestImagePrune(t *testing.T) {
 				buildCtx := data.Temp().Path()
 				data.Temp().Save(dockerfile, "Dockerfile")
 				helpers.Ensure("build", buildCtx)
-				// After we rebuild with tag, docker will no longer show the <none> version from above
+				// After we rebuild with tag, docker will no longer show the <untagged> version from above
 				// Swapping order does not change anything.
 				helpers.Ensure("build", "-t", identifier, buildCtx)
 				imgList := helpers.Capture("images")
-				assert.Assert(t, strings.Contains(imgList, "<none>"), "Missing <none>")
+				assert.Assert(t, strings.Contains(imgList, "<untagged>"), "Missing <untagged>")
 				assert.Assert(t, strings.Contains(imgList, identifier), "Missing "+identifier)
 			},
 			Command: test.Command("image", "prune", "--force"),
@@ -90,7 +90,7 @@ func TestImagePrune(t *testing.T) {
 						},
 						func(stdout string, t tig.T) {
 							imgList := helpers.Capture("images")
-							assert.Assert(t, !strings.Contains(imgList, "<none>"), imgList)
+							assert.Assert(t, !strings.Contains(imgList, "<untagged>"), imgList)
 							assert.Assert(t, strings.Contains(imgList, identifier))
 						},
 					),
@@ -122,7 +122,7 @@ func TestImagePrune(t *testing.T) {
 				helpers.Ensure("build", buildCtx)
 				helpers.Ensure("build", "-t", identifier, buildCtx)
 				imgList := helpers.Capture("images")
-				assert.Assert(t, strings.Contains(imgList, "<none>"), "Missing <none>")
+				assert.Assert(t, strings.Contains(imgList, "<untagged>"), "Missing <untagged>")
 				assert.Assert(t, strings.Contains(imgList, identifier), "Missing "+identifier)
 				helpers.Ensure("run", "--name", identifier, identifier)
 			},
@@ -136,7 +136,7 @@ func TestImagePrune(t *testing.T) {
 						func(stdout string, t tig.T) {
 							imgList := helpers.Capture("images")
 							assert.Assert(t, strings.Contains(imgList, data.Identifier()))
-							assert.Assert(t, !strings.Contains(imgList, "<none>"), imgList)
+							assert.Assert(t, !strings.Contains(imgList, "<untagged>"), imgList)
 							helpers.Ensure("rm", "-f", data.Identifier())
 							removed := helpers.Capture("image", "prune", "--force", "--all")
 							assert.Assert(t, strings.Contains(removed, data.Identifier()))
